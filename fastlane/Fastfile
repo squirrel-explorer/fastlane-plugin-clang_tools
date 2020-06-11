@@ -1,0 +1,13 @@
+platform :ios do
+  lane :analyze_with_clang do |options|
+    clang_analyzer(
+      workspace: options[:workspace],
+      scheme: options[:scheme],
+      project: options[:project],
+      xcodebuild: options[:xcodebuild],
+      xcpretty: options[:xcpretty],
+      clang: options[:clang],
+      configure: options[:configure]
+    )
+  end
+end
