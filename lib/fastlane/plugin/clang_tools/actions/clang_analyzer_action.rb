@@ -1,3 +1,5 @@
+require 'nokogiri'
+
 require 'fastlane/action'
 require_relative '../helper/clang_analyzer_helper'
 
@@ -73,7 +75,7 @@ module Fastlane
         cmd_line = []
 
         # xcodebuild executive
-        cmd_line << params.key?(:xcodebuild) ? params[:xcodebuild] : 'xcodebuild'
+        cmd_line << (params.key?(:xcodebuild) ? params[:xcodebuild] : 'xcodebuild')
 
         # -project
         if params.key?(:project)
@@ -91,9 +93,7 @@ module Fastlane
         end
 
         # xcode configuration
-        if params.key?(:configuration)
-          cmd_line << "-configuration #{params[:configuration]}"
-        end
+        cmd_line << (params.key?(:configuration) ? "-configuration #{params[:configuration]}" : '-configuration Debug')
 
         # build command
         cmd_line << 'clean'
@@ -102,7 +102,7 @@ module Fastlane
         cmd_line << '|'
 
         # xcpretty executive
-        cmd_line << params.key?(:xcpretty) ? params[:xcpretty] : 'xcpretty'
+        cmd_line << (params.key?(:xcpretty) ? params[:xcpretty] : 'xcpretty')
 
         cmd_line << '-r json-compilation-database'
 
@@ -335,7 +335,7 @@ module Fastlane
                                        type: String),
           FastlaneCore::ConfigItem.new(key: :configuration,
                                        description: 'The configuration of xcode project',
-                                       optional: false,
+                                       optional: true,
                                        type: String),
           FastlaneCore::ConfigItem.new(key: :output_format,
                                        description: 'The output file format of static analysis',
