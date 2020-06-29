@@ -1,16 +1,16 @@
 require 'nokogiri'
 
 require 'fastlane/action'
-require_relative '../helper/clang_analyzer_helper'
+require_relative '../helper/clang_tools_helper'
 
 module Fastlane
   module Actions
     class ClangAnalyzerAction < Action
       def self.run(params)
         # Parse CLI parameters
-        analyze_params = prepare(params)
+        analyze_params, err_msg = prepare(params)
         if analyze_params.nil?
-          puts('ERROR : Invalid parameters. Exiting ......')
+          puts(Helper::ClangToolsHelper.is_empty?(err_msg) ? 'ERROR : Invalid parameters. Exiting ......' : err_msg)
           return
         end
 
@@ -35,13 +35,27 @@ module Fastlane
       def self.prepare(params)
         if params.nil?
           analyze_params = nil
+          err_msg = 'ERROR : No input parameters. Exiting ......'
         else
           analyze_params = {}
+          err_msg = nil
 
           params.all_keys.each do |item|
-            unless params[item].nil? || params[item].empty?
+            unless Helper::ClangToolsHelper.is_empty?(params[item])
               analyze_params[item] = params[item]
             end
+          end
+
+          # Check if only the .xcworkspace specified or only the .xcodeproj specified
+          if analyze_params.key?(:workspace) && analyze_params.key?(:project)
+            return [nil, 'ERROR : ".xcworkspace" and ".xcodeproj" cannot be specified at the same time. Exiting ......']
+          end
+          if !analyze_params.key?(:workspace) && !analyze_params.key?(:project)
+            return [nil, 'ERROR : ".xcworkspace" or ".xcodeproj" must be specified. Exiting ......']
+          end
+
+          unless analyze_params.key?(:configuration)
+            analyze_params[:configuration] = 'Debug'
           end
 
           # The default output_format is 'plist-html'
@@ -50,12 +64,13 @@ module Fastlane
           end
           # For CI/CD convenience, this action only supports 'plist' or 'plist-html' as output_format
           unless analyze_params[:output_format].include?('plist')
-            return nil
+            return [nil, 'ERROR : Invalid "output_format". Exiting ......']
           end
 
           # The default output_dir is './static_analysis'
+          project = Helper::ClangToolsHelper.pick_non_empty(params[:workspace], params[:project])
           unless analyze_params.key?(:output_dir)
-            analyze_params[:output_dir] = './static_analysis'
+            analyze_params[:output_dir] = "#{File.dirname(File.realpath(project))}/static_analysis"
           end
           FileUtils.mkdir_p(analyze_params[:output_dir]) unless File.exist?(analyze_params[:output_dir])
           analyze_params[:output_compile_commands] = "#{analyze_params[:output_dir]}/compile_commands.json"
@@ -63,10 +78,10 @@ module Fastlane
           analyze_params[:output_report_dir] = "#{analyze_params[:output_dir]}/report-#{Time.new.strftime('%Y%m%d%H%M%S')}"
           FileUtils.mkdir_p(analyze_params[:output_report_dir]) unless File.exist?(analyze_params[:output_report_dir])
 
-          analyze_params[:output_summary_file] = 'clang_analyzer_summary.xml'
+          analyze_params[:output_summary_file] = 'clang_analysis_report.xml'
         end
 
-        analyze_params
+        [analyze_params, err_msg]
       end
 
       def self.xcode_build(params)
@@ -77,23 +92,21 @@ module Fastlane
         # xcodebuild executive
         cmd_line << (params.key?(:xcodebuild) ? params[:xcodebuild] : 'xcodebuild')
 
+        # -workspace
+        if params.key?(:workspace)
+          cmd_line << "-workspace #{params[:workspace]}"
         # -project
-        if params.key?(:project)
+        elsif params.key?(:project)
           cmd_line << "-project #{params[:project]}"
-        else
-          # -workspace
-          if params.key?(:workspace)
-            cmd_line << "-workspace #{params[:workspace]}"
-          end
+        end
 
-          # -scheme
-          if params.key?(:scheme)
-            cmd_line << "-scheme #{params[:scheme]}"
-          end
+        # -scheme
+        if params.key?(:scheme)
+          cmd_line << "-scheme #{params[:scheme]}"
         end
 
         # xcode configuration
-        cmd_line << (params.key?(:configuration) ? "-configuration #{params[:configuration]}" : '-configuration Debug')
+        cmd_line << "-configuration #{params[:configuration]}"
 
         # build command
         cmd_line << 'clean'
@@ -148,29 +161,45 @@ module Fastlane
         issues = []
         plist_files.each { |plist_file| parse_plist("#{params[:output_report_dir]}/#{plist_file}", issues) }
 
-        ordered_issues = parse_issues(issues)
+        grouped_issues = parse_issues(issues)
         builder = Nokogiri::XML::Builder.new do |xml|
-          xml.IssueList do
-            ordered_issues.values.each do |issue_entry|
-              issue_entry.each do |issue|
-                xml.Issue do
-                  xml.Checker(issue['checker'])
-                  xml.Category(issue['category'])
-                  xml.Type(issue['type'])
-                  xml.Message(issue['message'])
-                  xml.Source(issue['source_file'])
-                  xml.Line(issue['line'])
-                  xml.Col(issue['col'])
-                  xml.Context(issue['context'])
-                  xml.ContextKind(issue['context_kind'])
-                  xml.HtmlAttachments do
-                    issue['html_details'].each do |html|
-                      xml.Attachment(html)
-                    end
-                  end
-                end
+          xml.Report do
+            xml.Summary do
+              project = Helper::ClangToolsHelper.pick_non_empty(params[:workspace], params[:project])
+              if project.nil?
+                raise 'ERROR : Invalid Project!'
               end
+
+              xml.Project(project)
+              xml.ReportDirectory(params[:output_report_dir])
+              xml.ReportFormat(params[:output_format])
+              xml.IssueCount(grouped_issues.size)
             end
+
+            next if Helper::ClangToolsHelper.is_empty?(grouped_issues)
+
+            xml.IssueList do
+              grouped_issues.values.each do |issue_entry|
+                issue_entry.each do |issue|
+                  xml.Issue do
+                    xml.Checker(issue['checker'])
+                    xml.Category(issue['category'])
+                    xml.Type(issue['type'])
+                    xml.Message(issue['message'])
+                    xml.Source(issue['source_file'])
+                    xml.Line(issue['line'])
+                    xml.Col(issue['col'])
+                    xml.Context(issue['context'])
+                    xml.ContextKind(issue['context_kind'])
+                    xml.HtmlAttachments do
+                      issue['html_details'].each do |html|
+                        xml.Attachment(html)
+                      end
+                    end
+                  end # xml.Issue
+                end # issue_entry
+              end # grouped_issues.values
+            end # xml.IssueList
           end
         end
 
@@ -256,12 +285,12 @@ module Fastlane
         # The corresponding source file of the plist file
         # Noted : the length of 'files' will always be 1 now
         plist_files = plist['files']
-        if plist_files.nil? || plist_files.size.zero?
+        if Helper::ClangToolsHelper.is_empty?(plist_files)
           return
         end
 
         plist_diagnostics = plist['diagnostics']
-        if plist_diagnostics.nil? || plist_diagnostics.size.zero?
+        if Helper::ClangToolsHelper.is_empty?(plist_diagnostics)
           return
         end
 
@@ -284,22 +313,22 @@ module Fastlane
       end
 
       def self.parse_issues(issues)
-        ordered_issues = {}
+        grouped_issues = {}
 
-        if issues.nil? || issues.size.zero?
-          return ordered_issues
+        if Helper::ClangToolsHelper.is_empty?(issues)
+          return grouped_issues
         end
 
         issues.each do |issue|
           issue_key = issue['checker']
 
-          unless ordered_issues.key?(issue_key)
-            ordered_issues[issue_key] = []
+          unless grouped_issues.key?(issue_key)
+            grouped_issues[issue_key] = []
           end
-          ordered_issues[issue_key] << issue
+          grouped_issues[issue_key] << issue
         end
 
-        ordered_issues
+        grouped_issues
       end
 
       def self.description
@@ -321,12 +350,12 @@ module Fastlane
 
       def self.available_options
         [
-          FastlaneCore::ConfigItem.new(key: :project,
-                                       description: 'The xcode project',
-                                       optional: true,
-                                       type: String),
           FastlaneCore::ConfigItem.new(key: :workspace,
                                        description: 'The xcode workspace',
+                                       optional: true,
+                                       type: String),
+          FastlaneCore::ConfigItem.new(key: :project,
+                                       description: 'The xcode project',
                                        optional: true,
                                        type: String),
           FastlaneCore::ConfigItem.new(key: :scheme,

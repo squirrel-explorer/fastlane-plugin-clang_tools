@@ -1809,7 +1809,7 @@ Lint/UnusedBlockArgument:
 Lint/UnusedMethodArgument:
   Description: 'Checks for unused method arguments.'
   StyleGuide: '#underscore-unused-vars'
-  Enabled: true
+  Enabled: false
   VersionAdded: '0.21'
   VersionChanged: '0.81'
   AllowUnusedKeywordArguments: false
@@ -1888,7 +1888,7 @@ Metrics/AbcSize:
 
 Metrics/BlockLength:
   Description: 'Avoid long blocks with many lines.'
-  Enabled: true
+  Enabled: false
   VersionAdded: '0.44'
   VersionChanged: '0.66'
   CountComments: false  # count full line comments?
@@ -2604,7 +2604,7 @@ Style/CommentAnnotation:
 
 Style/CommentedKeyword:
   Description: 'Do not place comments on the same line as certain keywords.'
-  Enabled: true
+  Enabled: false
   VersionAdded: '0.51'
 
 Style/ConditionalAssignment:
